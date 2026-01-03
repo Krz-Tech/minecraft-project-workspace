@@ -30,7 +30,7 @@ PAPER_VERSION="1.21.4"
 PAPER_BUILD="232"
 
 # Documentation repository
-DOCS_REPO="git@github.com:Krz-Tech/minecraft-project.git"
+DOCS_REPO="https://github.com/Krz-Tech//minecraft-project.git"
 
 # Colors for output
 RED='\033[0;31m'
