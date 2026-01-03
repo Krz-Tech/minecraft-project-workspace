@@ -19,7 +19,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_DIR="${SCRIPT_DIR}/server"
 DOCS_DIR="${SCRIPT_DIR}/docs"
-SCREEN_NAME="minecraft"
+TMUX_SESSION="minecraft"
 SERVER_JAR="paper.jar"
 JAVA_OPTS="-Xms2G -Xmx4G"
 PORT=25565
@@ -30,7 +30,7 @@ PAPER_VERSION="1.21.4"
 PAPER_BUILD="232"
 
 # Documentation repository
-DOCS_REPO="https://github.com/Krz-Tech//minecraft-project.git"
+DOCS_REPO="git@github.com:Krz-Tech/minecraft-project.git"
 
 # Colors for output
 RED='\033[0;31m'
@@ -53,7 +53,7 @@ log_error() {
 
 # Check if server is running
 is_running() {
-    screen -list | grep -q "\.${SCREEN_NAME}[[:space:]]"
+    tmux has-session -t "${TMUX_SESSION}" 2>/dev/null
 }
 
 # Command: setup
@@ -147,15 +147,15 @@ cmd_start() {
 
     cd "${SERVER_DIR}"
 
-    # Start server in screen session
-    screen -dmS "${SCREEN_NAME}" java ${JAVA_OPTS} -jar "${SERVER_JAR}" nogui
+    # Start server in tmux session
+    tmux new-session -d -s "${TMUX_SESSION}" "java ${JAVA_OPTS} -jar ${SERVER_JAR} nogui"
 
     # Wait for server to start
     sleep 2
 
     if is_running; then
         log_info "Server started successfully"
-        log_info "Screen session: ${SCREEN_NAME}"
+        log_info "Tmux session: ${TMUX_SESSION}"
         log_info "Port: ${PORT}"
     else
         log_error "Failed to start server"
@@ -173,7 +173,7 @@ cmd_stop() {
     log_info "Stopping server..."
 
     # Send stop command
-    screen -S "${SCREEN_NAME}" -X stuff "stop\n"
+    tmux send-keys -t "${TMUX_SESSION}" "stop" Enter
 
     # Wait for server to stop
     local waited=0
@@ -184,7 +184,7 @@ cmd_stop() {
 
     if is_running; then
         log_warn "Server did not stop gracefully, forcing..."
-        screen -S "${SCREEN_NAME}" -X quit
+        tmux kill-session -t "${TMUX_SESSION}"
     fi
 
     log_info "Server stopped"
@@ -198,9 +198,9 @@ cmd_attach() {
     fi
 
     log_info "Attaching to server console..."
-    log_info "Detach with: Ctrl+A, then D"
+    log_info "Detach with: Ctrl+B, then D"
 
-    screen -r "${SCREEN_NAME}"
+    tmux attach-session -t "${TMUX_SESSION}"
 }
 
 # Command: send
@@ -216,7 +216,7 @@ cmd_send() {
     fi
 
     local command="$*"
-    screen -S "${SCREEN_NAME}" -X stuff "${command}\n"
+    tmux send-keys -t "${TMUX_SESSION}" "${command}" Enter
 
     log_info "Sent: ${command}"
 }
@@ -245,7 +245,7 @@ Commands:
   setup     Initial setup (clone docs, download Paper, accept EULA, etc.)
   start     Start the development server
   stop      Stop the development server
-  attach    Attach to server console (human only, use Ctrl+A D to detach)
+  attach    Attach to server console (human only, use Ctrl+B D to detach)
   send      Send a command to the server (agent friendly)
   status    Check if server is running (exit code: 0=running, 1=stopped)
   help      Show this help message
