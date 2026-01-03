@@ -214,11 +214,21 @@ cmd_start() {
         exit 1
     fi
 
-    # Check if JAR file is valid
-    if ! file "${SERVER_DIR}/${SERVER_JAR}" | grep -q "Java archive\|Zip archive"; then
-        log_error "Server JAR appears to be corrupted or invalid"
-        log_error "Try removing it and running './mc setup' again"
-        exit 1
+    # Check if JAR file is valid (optional - skip if 'file' command not available)
+    if command -v file &> /dev/null; then
+        if ! file "${SERVER_DIR}/${SERVER_JAR}" | grep -q "Java archive\|Zip archive"; then
+            log_error "Server JAR appears to be corrupted or invalid"
+            log_error "Try removing it and running './mc setup' again"
+            exit 1
+        fi
+    elif command -v unzip &> /dev/null; then
+        if ! unzip -t "${SERVER_DIR}/${SERVER_JAR}" &> /dev/null; then
+            log_error "Server JAR appears to be corrupted or invalid"
+            log_error "Try removing it and running './mc setup' again"
+            exit 1
+        fi
+    else
+        log_warn "Cannot verify JAR file (file/unzip commands not available)"
     fi
 
     log_info "Starting Minecraft server..."
@@ -231,10 +241,21 @@ cmd_start() {
     # Start server in tmux session with error logging
     local start_script="cd ${SERVER_DIR} && java ${JAVA_OPTS} -jar ${SERVER_JAR} nogui 2>&1 | tee -a ${SERVER_DIR}/logs/console.log"
 
-    if ! tmux new-session -d -s "${TMUX_SESSION}" "${start_script}"; then
+    # Create tmux session with server window
+    if ! tmux new-session -d -s "${TMUX_SESSION}" -n "server" "${start_script}"; then
         log_error "Failed to create tmux session"
         log_error "Check if tmux is working correctly: tmux new-session -d -s test"
         exit 1
+    fi
+
+    # Start port forward in separate window (Coder environment only)
+    if command -v coder &> /dev/null; then
+        log_info "Starting port forward..."
+        tmux new-window -t "${TMUX_SESSION}" -n "portfwd" "coder port-forward --tcp ${PORT}"
+        log_debug "Port forward started on port ${PORT}"
+    else
+        log_warn "Coder CLI not found, skipping port forward"
+        log_warn "You may need to manually configure port forwarding"
     fi
 
     log_info "Waiting for server to initialize..."
@@ -258,7 +279,10 @@ cmd_start() {
             if grep -q "Done" "${SERVER_DIR}/logs/latest.log" 2>/dev/null; then
                 log_info "Server started successfully"
                 log_info "Tmux session: ${TMUX_SESSION}"
-                log_info "Port: ${PORT}"
+                log_info "  - Window 'server': Minecraft server"
+                if command -v coder &> /dev/null; then
+                    log_info "  - Window 'portfwd': Port forward (${PORT})"
+                fi
                 log_info "Use './mc logs' to view server logs"
                 log_info "Use './mc attach' to access console"
                 return 0
@@ -269,7 +293,10 @@ cmd_start() {
     if is_running; then
         log_info "Server is starting (may take a moment to fully initialize)"
         log_info "Tmux session: ${TMUX_SESSION}"
-        log_info "Port: ${PORT}"
+        log_info "  - Window 'server': Minecraft server"
+        if command -v coder &> /dev/null; then
+            log_info "  - Window 'portfwd': Port forward (${PORT})"
+        fi
         log_info "Use './mc logs' to monitor startup progress"
     else
         log_error "Failed to start server"
@@ -287,8 +314,8 @@ cmd_stop() {
 
     log_info "Stopping server..."
 
-    # Send stop command
-    tmux send-keys -t "${TMUX_SESSION}" "stop" Enter
+    # Send stop command to server window
+    tmux send-keys -t "${TMUX_SESSION}:server" "stop" Enter
 
     # Wait for server to stop
     local waited=0
@@ -303,6 +330,7 @@ cmd_stop() {
     fi
 
     log_info "Server stopped"
+    log_info "Port forward also terminated"
 }
 
 # Command: attach
@@ -314,8 +342,9 @@ cmd_attach() {
 
     log_info "Attaching to server console..."
     log_info "Detach with: Ctrl+B, then D"
+    log_info "Switch windows: Ctrl+B, then N (next) or P (previous)"
 
-    tmux attach-session -t "${TMUX_SESSION}"
+    tmux attach-session -t "${TMUX_SESSION}:server"
 }
 
 # Command: send
@@ -331,7 +360,7 @@ cmd_send() {
     fi
 
     local command="$*"
-    tmux send-keys -t "${TMUX_SESSION}" "${command}" Enter
+    tmux send-keys -t "${TMUX_SESSION}:server" "${command}" Enter
 
     log_info "Sent: ${command}"
 }
@@ -340,6 +369,10 @@ cmd_send() {
 cmd_status() {
     if is_running; then
         echo "running"
+        # Show window details
+        echo ""
+        echo "Tmux windows:"
+        tmux list-windows -t "${TMUX_SESSION}" -F "  - #{window_name}: #{pane_current_command}" 2>/dev/null || true
         exit 0
     else
         echo "stopped"
@@ -386,23 +419,28 @@ Usage: ./mc <command> [args]
 
 Commands:
   setup     Initial setup (clone docs, download Paper, accept EULA, etc.)
-  start     Start the development server
-  stop      Stop the development server
+  start     Start the development server and port forward
+  stop      Stop the development server and port forward
   attach    Attach to server console (human only, use Ctrl+B D to detach)
   send      Send a command to the server (agent friendly)
   status    Check if server is running (exit code: 0=running, 1=stopped)
   logs      View server logs (usage: ./mc logs [lines])
   help      Show this help message
 
+Tmux session structure:
+  minecraft (session)
+  ├── server   - Minecraft server process
+  └── portfwd  - Coder port forward (25565)
+
 Examples:
   ./mc setup                    # Initial setup
-  ./mc start                    # Start server
+  ./mc start                    # Start server and port forward
   ./mc send "sk reload all"     # Reload all Skript scripts
   ./mc send "list"              # List online players
   ./mc status                   # Check server status
   ./mc logs                     # View last 50 lines of logs
   ./mc logs 100                 # View last 100 lines of logs
-  ./mc stop                     # Stop server
+  ./mc stop                     # Stop server and port forward
 
 For agents:
   Use './mc send <command>' to execute Minecraft commands non-interactively.
